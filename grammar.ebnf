@@ -1,0 +1,26 @@
+program = statement, {statement}
+
+block = "{",{statement}, "}"
+statement = short_statement | while_block | if_block
+short_statement = declaration | assignement | expression | inc-dec, ";"
+assignement = name, assignement_symbol, expression
+declaration = "var" , name , {",",name},  ";"
+
+expression = compar
+
+compar = calcul, [compar_op, calcul]
+calcul = terme, [('+'|'-'), terme]
+terme = factor [("*"|"/"), factor]
+factor = val ["**", val]
+val = name | number | "(", expression, ")"
+inc-dec = name, ("++" | "--")
+
+condition = '(', expression, ')'
+while_block = "while", condition, block
+if_block = "if", condition, block, ["else", block]
+
+
+
+bin_op = "+"|"-"|"*"|"/"|"**"
+compar_op = ">"|">="|"<"|"<="|"=="
+assignement_symbol = "="|"+="|"-="|"/="|"*="
