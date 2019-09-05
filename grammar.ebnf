@@ -1,12 +1,17 @@
 program = statement, {statement}
 
 block = "{",{statement}, "}"
-statement = short_statement | while_block | if_block
-short_statement = declaration | assignement | expression | inc-dec, ";"
-assignement = name, assignement_symbol, expression
-declaration = "var" , name , {",",name},  ";"
+statement = short_statement | while_block | if_block | function_def
+short_statement = print | return | input | declaration | assignement | expression | inc-dec, ";"
 
-expression = compar
+assignement = name, assignement_symbol, expression
+declaration = "var" , name , {",",name}
+return = "return", expression
+
+expression = compar_op | function_call
+
+function_call = name, '(',[expression,{','expression,}]
+
 
 compar = calcul, [compar_op, calcul]
 calcul = terme, [('+'|'-'), terme]
@@ -18,6 +23,7 @@ inc-dec = name, ("++" | "--")
 condition = '(', expression, ')'
 while_block = "while", condition, block
 if_block = "if", condition, block, ["else", block]
+function_def = "def", name, '(',[name,{',',name}],')',block
 
 
 

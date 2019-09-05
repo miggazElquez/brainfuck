@@ -134,7 +134,7 @@ def repl():
 							ptr = 0
 							raise BFError(f"You can't go to a cell before 0 (code before : {prog[:index]}, code after : {prog[index:]})")
 					elif instr == '.':
-						print(chr(ar[ptr]),end='')
+						print(chr(ar[ptr]),end='',flush=True)
 					elif instr == ',':
 						val = input()
 						if len(val) > 1:
@@ -159,7 +159,7 @@ def repl():
 							if prog[index+1] == '(':
 								index = index+2
 								while prog[index] != ')':
-									print(prog[index],end='')
+									print(prog[index],end='',flush=True)
 									index += 1
 								print(' ',end='')
 						except IndexError:
@@ -189,10 +189,10 @@ There is also some special command :
 
 def main():
 	if len(sys.argv) == 2:
-		interpret(open(sys.argv[2]).read())
+		interpret(open(sys.argv[1]).read())
 	elif len(sys.argv) == 3:
 		if sys.argv[1] == '-i':		#oui c'est de lam erde comme manière de faire
-			interpret(sys.argv[2])
+			interpret(sys.argv[1])
 	else:
 		repl()
 

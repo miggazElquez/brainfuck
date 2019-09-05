@@ -1,5 +1,5 @@
 import re
-from collections import namedtuple
+from collections import namedtuple, ChainMap
 import os
 
 from termcolor import cprint
@@ -9,16 +9,17 @@ os.system('color')
 REGEXS = [(re.compile(i),j) for i,j in (
 	(r'\s+','WHITESPACE'),
 	(r'//[^\n]*|/\*(?s:.)*\*/','COMMENTS'),
-	(r'if|for|while|else|var','KEYWORD'),
+	(r'if|for|while|else|var|def|return','KEYWORD'),
 
-	(r'>=|<=|==|>|<','COMPAR_OP'),
+	(r'>=|<=|==|>|<|!=','COMPAR_OP'),
 	(r'\+=|-=|\*=|/=|=','ASSIGNEMENT_OP'),
 	(r'\+\+|--','INC_DEC_OP'),
 	(r'\+|\*\*|\*|-|/','BIN_OP'),
 	(r'\(|\)|\{|\}|;|,','CONTROL_CHAR'),
 
 	(r'[a-zA-Z]\w*','IDENTIFIERS'),
-	(r'\d[\d_]*','NUMBERS')
+	(r'\d[\d_]*','NUMBERS'),
+	(r"'.'",'CHAR')
 
 )]
 
@@ -50,15 +51,18 @@ def clean_tokens(tokens):
 #****************************
 
 
-ProgramNode = namedtuple('ProgramNode',('list_of_statement'))
+ProgramNode = namedtuple('ProgramNode',('list_of_statement','name'))
 BlockNode = namedtuple('BlockNode',('list_of_statement'))
 
 IfNode = namedtuple('IfNode',('condition','block','else_block'))
 WhileNode = namedtuple('WhileNode',('condition','block'))
+FunctionDefNode = namedtuple('FunctionDefNode',('name','args','block'))
 
 AssignementNode = namedtuple('AssignementNode',('target','operator','expression'))
 IncDecNode = namedtuple('IncDecNode',('name','operator'))
 DeclarationNode = namedtuple('DeclarationNode',('names'))
+FunctionCallNode = namedtuple('FunctionCallNode',('name','args'))
+ReturnNode = namedtuple('ReturnNode',('expr'))
 BinOpNode = namedtuple('BinOpNode',('left','op','right'))
 
 IdentifierNode = namedtuple('IdentifierNode',('name'))
@@ -107,7 +111,7 @@ class Parser:
 				break
 		if not len(nodes):
 			raise ValueError("Your program seems to be empty")
-		return ProgramNode(nodes)
+		return ProgramNode(nodes,'__main__') #plus simple pour le debug
 
 	def block(self):
 		#print(f"enter block ({self.pos})")
@@ -128,7 +132,7 @@ class Parser:
 
 	def statement(self):
 		#print(f"enter statement ({self.pos})")
-		for func in (self.short_statement,self.while_block, self.if_block):
+		for func in (self.short_statement,self.while_block, self.if_block,self.function_block):
 			node = func()
 			if node:
 				#cprint("statement",'green')
@@ -138,7 +142,7 @@ class Parser:
 
 	def short_statement(self):
 		#print(f"enter short_statement ({self.pos})")
-		for func in (self.declaration, self.assignement,self.inc_dec,self.expression,):
+		for func in (self.declaration, self.assignement,self.inc_dec,self.expression,self.return_):
 			node = func()
 			if node:
 				if self.accept_text(";"):
@@ -148,6 +152,14 @@ class Parser:
 					raise SyntaxError(f"Missing ';' ({node})")
 		#cprint("no short_statement",'red')
 		return None
+
+	def return_(self):
+		if not self.accept_text('return'):
+			return None
+		expr = self.expression()
+		if not expr:
+			raise SyntaxError("Bad Return")
+		return ReturnNode(expr)
 
 	def declaration(self):
 		if not self.accept_text('var'):
@@ -162,10 +174,10 @@ class Parser:
 				if name:
 					names.append(IdentifierNode(name.text))
 				else:
-					raise SyntaxError("Expected an identifiers after a ',' in a declaration statemement")
+					raise SyntaxError("Expected an identifiers after a ',' in a declaration statement")
 			else:
 				break
-			
+
 		return DeclarationNode(names)
 
 	def assignement(self):
@@ -177,7 +189,6 @@ class Parser:
 		sym = self.accept_tag('ASSIGNEMENT_OP')
 		if not sym:
 			self.pos -= 1 #for the name
-			#cprint("no assignement (no op)",'red')
 			return None
 		expr = self.expression()
 		if not expr:
@@ -200,14 +211,34 @@ class Parser:
 		return IncDecNode(IdentifierNode(name.text),op.text)
 
 	def expression(self):
-		#print(f"enter expression ({self.pos})")
 		compar = self.compar()
 		if compar:
-			#cprint("expression",'green')
 			return compar
 
-		#cprint("no expression",'red')
 		return None
+
+	def call_function(self):
+		name = self.accept_tag('IDENTIFIERS')
+		if not name:
+			return None
+		if not self.accept_text('('):
+			self.pos -= 1
+			return None
+
+		expr = self.expression()
+		args = []
+		if expr:
+			args.append(expr)
+			while self.accept_text(','):
+				expr = self.expression()
+				if not expr:
+					raise SyntaxError("missing argument")
+				args.append(expr)
+		if not self.accept_text(')'):
+			raise SyntaxError("A function call must have a ')' at the end")
+
+		return FunctionCallNode(name.text,args)
+
 
 	def compar(self):
 		calcul1 = self.calcul()
@@ -280,13 +311,23 @@ class Parser:
 		return val
 
 	def value(self):
-		#print(f"enter value ({self.pos})")		
+		#print(f"enter value ({self.pos})")	
+		func = self.call_function()		#The orders matters !!!
+		if func:
+			return func
+
 		name = self.accept_tag('IDENTIFIERS')
 		if name:
 			return IdentifierNode(name.text)
+		
 		number = self.accept_tag('NUMBERS')
 		if number:
 			return NumberNode(int(number.text))
+
+		char = self.accept_tag('CHAR')
+		if char:
+			return NumberNode(ord(char.text[1]))
+
 		if self.accept_text('('):
 			expr = self.expression()
 			if not (expr and self.accept_text(')')):
@@ -340,6 +381,35 @@ class Parser:
 		#cprint("if_block",'green')
 		return IfNode(cond,block,None)
 
+	def function_block(self):
+		if not self.accept_text('def'):
+			return None
+		name = self.accept_tag('IDENTIFIERS')
+		if not name:
+			raise SyntaxError("A function need a name")
+		if not self.accept_text('('):
+			raise SyntaxError("Bad function block")
+		arg = self.accept_tag('IDENTIFIERS')
+		args = []
+		if arg:
+			args.append(IdentifierNode(arg.text))
+			while self.accept_text(','):
+				arg = self.accept_tag('IDENTIFIERS')
+				if not arg:
+					raise SyntaxError("Bad function block")
+				args.append(IdentifierNode(arg.text))
+
+		if not self.accept_text(')'):
+			raise SyntaxError("Bad function block")
+
+		block = self.block()
+		if not block:
+			raise SyntaxError("Bad function block")
+
+		return FunctionDefNode(name.text,args,block)
+
+
+
 
 def parse(prog):
 	tokens = clean_tokens(lex(prog))
@@ -349,27 +419,59 @@ def parse(prog):
 
 #***************
 
+BUILT_IN_FUNCTIONS = ChainMap({
+	'putc':[('PUTC',)],
+	'scanc':[('SCANC',)],
+	'mod':[
 
+	('')
+
+	],
+
+	})
+		
 class Ast_to_IR:
 
-	def __init__(self,ast):
+	def __init__(self,ast,functions=BUILT_IN_FUNCTIONS):
 		self.ast = ast
+		self.functions = functions
 
 	def add(self,val):
 		self.ir.append(val)
 
 	def convert(self):
+
+		if isinstance(self.ast,ProgramNode):
+			statements = self.ast.list_of_statement
+			args = []
+			block = self.ast
+		elif isinstance(self.ast,FunctionDefNode):
+			statements = self.ast.block.list_of_statement
+			args = self.ast.args
+			block = self.ast.block
+
+
 		self.ir = []
+		self.functions = self.functions.new_child()
+		for statement in statements:
+			if isinstance(statement,FunctionDefNode):
+				self.functions[statement.name] = Ast_to_IR(statement,self.functions).convert()
+
+
 		vars_ = []
-		for statemement in self.ast.list_of_statement:
-			if isinstance(statemement,DeclarationNode):
-				vars_.extend(statemement.names)
-		vars_ = {val:index for index,val in enumerate(vars_)}
-		self.vars = vars_
+		for statement in statements:
+			if isinstance(statement,DeclarationNode):
+				vars_.extend(statement.names)
+
+		all_vars = {val:index for index,val in enumerate((args+vars_)[::-1])}
+		self.vars = all_vars
 		self.pos = 0
 
-		self.add(('INIT',len(vars_)))
-		self.push_block(self.ast)
+		nb_decalage = len(vars_) - (1 if isinstance(self.ast,ProgramNode) else 0)
+		self.add(('INIT_FUNCTION',nb_decalage ,self.ast.name))
+		self.push_block(block)
+		if isinstance(self.ast,FunctionDefNode):
+			self.add(('END_FUNCTION',len(all_vars),self.ast.name))
 		return self.ir
 
 	def push_block(self,node):
@@ -390,6 +492,9 @@ class Ast_to_IR:
 		self.add(('ASSIGN',assign_distance,node.target.name))
 		self.pos -= 1
 
+	def return_to_ir(self,node):
+		self.push_expr(node.expr)
+
 	def expression_statement_to_ir(self,node):
 		self.push_expr(node)
 		self.pos -= 1
@@ -403,6 +508,19 @@ class Ast_to_IR:
 			self.add(('DEC',assign_distance,node.name.name))
 
 	def push_expr(self,node):
+
+		if isinstance(node,FunctionCallNode):
+			for arg in node.args:
+				self.push_expr(arg)
+
+			try:
+				self.ir.extend(self.functions[node.name])
+			except KeyError:
+				raise SyntaxError(f"The function {node.name} doesn't exist")
+			self.pos -= len(node.args)
+			self.pos += 1
+			return
+
 		if isinstance(node,NumberNode):
 			self.pos += 1
 			self.add(('PUSH_NUMBER',node.value))
@@ -449,7 +567,9 @@ class Ast_to_IR:
 
 methods = {
 	DeclarationNode: lambda self,node:None,
+	FunctionDefNode: lambda self,node:None,
 	AssignementNode: Ast_to_IR.assignement_to_ir,
+	ReturnNode: Ast_to_IR.return_to_ir,
 	WhileNode: Ast_to_IR.while_to_ir,
 	IfNode: Ast_to_IR.if_to_ir,
 	IncDecNode: Ast_to_IR.inc_dec_to_ir,
@@ -459,8 +579,14 @@ default = Ast_to_IR.expression_statement_to_ir
 
 #************
 
-def init(nb):
-	return '>' * (nb-1) + f'	INIT {nb}'
+
+
+def init_function(nb,name):
+	return '>' * nb + f'	INIT_FUNCTION {name}'
+
+def end_function(nb,name):
+	return '<[-]' * nb + '>' * nb + (f"[-{'<'*nb}+{'>'*nb}]" if nb else "") + '<' * nb+ f'	END_FUNCTION {name}'
+
 
 def assign(val,name):
 	return f"{'<'*val}[-]{'>'*val}[-{'<'*val}+{'>'*val}]<	ASSIGN {name}"
@@ -481,13 +607,34 @@ def push_var(val,name):
 	return '<' * (val-1) + f"[-{'>'*val}+>+<{'<'*val}]" + f"{'>'*val}>[-<{'<'*val}+>{'>'*val}]<" + f"	PUSH_VAR {name}"
 
 def bin_op(op):
-	if op == "+":
+	if op == '+':
 		bf = "[-<+>]<"
-	elif op == "-":
+	elif op == '-':
 		bf =  "[-<->]<"
+	elif op == '*':
+		bf = "<[->>+<<]>[->[-<<+>>>+<]>[-<+>]<<]>[-]<<"
+	elif op == '/':
+		bf = "[->+>>+<<<]<[->+>>+<<<]>>>[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]+>[<->[-]]<"
+		"[-<[-<->>+<]>[-<+>]<<<+>[->>+>+<<<]>>>[-<<<+>>>]<<[->>+>+<<<]>>>[-<<<+>>>]<<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>"
+		">[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]>>>[<<<+>>>-]<<<#]<[-]<[-]<"
+
+	elif op == '==':
+		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + "+>[<->[-]]>>[<<<->>>-]<<<"
+	elif op == '!=':
+		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + ">[<+>[-]]>>[<<<+>>>-]<<<"
+	elif op == '>':
+		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + ">>>[<<<+>>>-]<<<"
+	elif op == '>=':
+		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + "+>[<->[-]]<"
+	elif op == '<':
+		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + ">[<+>[-]]<"
+	elif op == '<=':
+		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + "+>>>[<<<->>>-]<<<"
+
 	else:
 		raise Exception(f"bin_op {op} not implemented yet")
-	return bf + f"	BIN_OP {op if op not in ('+','-') else {'+':'plus','-':'minus'}[op]}"
+	return bf + f"	BIN_OP " +\
+	(op if op not in ('+','-','<','>','<=','>=') else {'+':'plus','-':'minus','>':'gt','<':'st','>=':'gt_eq','<=':'st_eq'}[op])
 
 def while_enter():
 	return "[[-]<	WHILE_ENTER"
@@ -507,16 +654,47 @@ def else_end():
 def if_end():
 	return "<]>[-]<<	IF_END"
 
+def putc():
+	return ".	PRINT"
+
+def scanc():
+	return ",	INPUT"
+
+
 def compile_ir(ir):
 	return '\n'.join(globals()[i[0].lower()](*i[1:]) for i in ir)
 
 
+
 #**************
 
-def compile(prog):
+def compile(prog,level=4):
 	tokens = lex(prog)
+	if level == 1:
+		return tokens
 	ast = Parser(tokens).parse()
+	if level == 2:
+		return ast
 	ir = Ast_to_IR(ast).convert()
+	if level == 3:
+		return ir
 	brainfuck = compile_ir(ir)
 	return brainfuck
+
+
+def main():
+	import sys
+	try:
+		file = sys.argv[1]
+	except IndexError:
+		raise Exception("You must set a file")
+
+	prog = open(file).read()
+	bf_prog = compile(prog)
+	with open(os.path.splitext(file)[0]+'.bf','w') as f:
+		f.write(bf_prog)
+
+
+if __name__ == '__main__':
+	main()
 
