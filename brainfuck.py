@@ -69,10 +69,6 @@ def interpret(prog):
 	return ar
 
 
-def format(prog,debug_mode=True):
-	if debug_mode:
-		return ''.join(i for i in prog if i in '[]<>+-.,#')
-	return ''.join(i for i in prog if i in '[]<>+-.,')
 
 
 def repl():

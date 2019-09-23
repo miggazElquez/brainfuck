@@ -9,18 +9,19 @@ os.system('color')
 REGEXS = [(re.compile(i),j) for i,j in (
 	(r'\s+','WHITESPACE'),
 	(r'//[^\n]*|/\*(?s:.)*\*/','COMMENTS'),
-	(r'if|for|while|else|var|def|return','KEYWORD'),
+	(r'if|while|else|var|def|return|bf|import','KEYWORD'),
 
+	(r'\{\{[^}]*\}\}','BRAINFUCK_CODE'),
 	(r'>=|<=|==|>|<|!=','COMPAR_OP'),
-	(r'\+=|-=|\*=|/=|=','ASSIGNEMENT_OP'),
+	(r'\+=|%=|-=|\*=|/=|=','ASSIGNEMENT_OP'),
 	(r'\+\+|--','INC_DEC_OP'),
-	(r'\+|\*\*|\*|-|/','BIN_OP'),
+	(r'\+|\*\*|\*|-|/|%','BIN_OP'),
 	(r'\(|\)|\{|\}|;|,','CONTROL_CHAR'),
 
 	(r'[a-zA-Z]\w*','IDENTIFIERS'),
 	(r'\d[\d_]*','NUMBERS'),
-	(r"'.'",'CHAR')
-
+	(r"'.'",'CHAR'),
+	(r'"(\\.|[^"\n])*"','STRING'),
 )]
 
 USELESS_TAGS = ('WHITESPACE','COMMENTS')
@@ -47,6 +48,34 @@ def lex(program,keep_whitespace=False):
 def clean_tokens(tokens):
 	return [token for token in tokens if token.tag not in USELESS_TAGS]
 
+def format_bf(prog,debug_mode=True):
+	if debug_mode:
+		t = []
+		index = 0
+		while index < len(prog):
+			if prog[index] in '[]<>+-.,':
+				t.append(prog[index])
+				index += 1
+			elif prog[index] == '#':
+				t.append('#')
+				index += 1
+				try:
+					if prog[index] == '(':
+						index += 1
+						t.append('(')
+						while prog[index] != ')':
+							t.append(prog[index])
+							index+=1
+						t.append(')')
+				except IndexError:
+					pass
+			else:
+				index+=1
+		return ''.join(t)
+
+	return ''.join(i for i in prog if i in '[]<>+-.,')
+
+
 
 #****************************
 
@@ -57,12 +86,14 @@ BlockNode = namedtuple('BlockNode',('list_of_statement'))
 IfNode = namedtuple('IfNode',('condition','block','else_block'))
 WhileNode = namedtuple('WhileNode',('condition','block'))
 FunctionDefNode = namedtuple('FunctionDefNode',('name','args','block'))
+BfDefNode = namedtuple('BfDefNode',('name','code'))
 
 AssignementNode = namedtuple('AssignementNode',('target','operator','expression'))
 IncDecNode = namedtuple('IncDecNode',('name','operator'))
 DeclarationNode = namedtuple('DeclarationNode',('names'))
 FunctionCallNode = namedtuple('FunctionCallNode',('name','args'))
 ReturnNode = namedtuple('ReturnNode',('expr'))
+ImportNode = namedtuple('ImportNode',('path',))
 BinOpNode = namedtuple('BinOpNode',('left','op','right'))
 
 IdentifierNode = namedtuple('IdentifierNode',('name'))
@@ -105,6 +136,9 @@ class Parser:
 		nodes = []
 		while 1:
 			statement = self.statement()
+			if isinstance(statement,ImportNode):
+				ast = get_ast(statement.path)
+				nodes.extend(ast)
 			if statement:
 				nodes.append(statement)
 			else:
@@ -131,18 +165,15 @@ class Parser:
 		return BlockNode(nodes)
 
 	def statement(self):
-		#print(f"enter statement ({self.pos})")
-		for func in (self.short_statement,self.while_block, self.if_block,self.function_block):
+		for func in (self.short_statement,self.while_block, self.if_block,self.function_block, self.bf_block):
 			node = func()
 			if node:
-				#cprint("statement",'green')
 				return node
-		#cprint("no statement",'red')
 		return None
 
 	def short_statement(self):
 		#print(f"enter short_statement ({self.pos})")
-		for func in (self.declaration, self.assignement,self.inc_dec,self.expression,self.return_):
+		for func in (self.declaration, self.assignement,self.inc_dec,self.expression,self.return_,self.import_):
 			node = func()
 			if node:
 				if self.accept_text(";"):
@@ -152,6 +183,14 @@ class Parser:
 					raise SyntaxError(f"Missing ';' ({node})")
 		#cprint("no short_statement",'red')
 		return None
+
+	def import_(self):
+		if not self.accept_text('import'):
+			return None
+		path = self.accept_tag('STRING')
+		if not path:
+			raise SyntaxError('Bad import')
+		return ImportNode(path.text[1:-1])
 
 	def return_(self):
 		if not self.accept_text('return'):
@@ -260,19 +299,22 @@ class Parser:
 		if not terme1:
 			return None
 
-		op = None
-		sym = self.accept_text('+')
-		if sym:
-			op = sym
-		sym = self.accept_text('-')
-		if sym:
-			op = sym
+		while 1:
+			op = None
+			sym = self.accept_text('+')
+			if sym:
+				op = sym
+			sym = self.accept_text('-')
+			if sym:
+				op = sym
+			if not op:
+				return terme1
 
-		if op:
-			terme2 = self.terme()
-			if not terme2:
-				raise SyntaxError("missing second term in calcul")
-			return BinOpNode(terme1,op.text,terme2)
+			if op:
+				terme2 = self.terme()
+				if not terme2:
+					raise SyntaxError("missing second term in calcul")
+				terme1 = BinOpNode(terme1,op.text,terme2)
 		return terme1
 
 
@@ -282,19 +324,25 @@ class Parser:
 		if not factor1:
 			return None
 
-		op = None
-		sym = self.accept_text('*')
-		if sym:
-			op = sym
-		sym = self.accept_text('/')
-		if sym:
-			op = sym
+		while 1:
+			op = None
+			sym = self.accept_text('*')
+			if sym:
+				op = sym
+			sym = self.accept_text('/')
+			if sym:
+				op = sym
+			sym = self.accept_text('%')
+			if sym:
+				op = sym
 
-		if op:
-			factor2 = self.factor()
-			if not factor2:
-				raise SyntaxError("missing second factor in terme")
-			return BinOpNode(factor1,op.text,factor2)
+			if op:
+				factor2 = self.factor()
+				if not factor2:
+					raise SyntaxError("missing second factor in terme")
+				factor1 = BinOpNode(factor1,op.text,factor2)
+			else:
+				break
 		return factor1
 
 	def factor(self):
@@ -302,12 +350,11 @@ class Parser:
 		val = self.value()
 		if not val:
 			return None
-		op = self.accept_text('**')
-		if op:
-			val2 = self.value()
-			if not val2:
-				raise SyntaxError("missing second val un factor")
-			return BinOpNode(val,op.text,val2)
+		while self.accept_text('**'):
+				val2 = self.value()
+				if not val2:
+					raise SyntaxError("missing second val un factor")
+				val =  BinOpNode(val,'**',val2)
 		return val
 
 	def value(self):
@@ -408,6 +455,19 @@ class Parser:
 
 		return FunctionDefNode(name.text,args,block)
 
+	def bf_block(self):
+		if not self.accept_text('bf'):
+			return None
+		name = self.accept_tag('IDENTIFIERS')
+		if not name:
+			raise SyntaxError("A bf function need a name")
+
+		code = self.accept_tag('BRAINFUCK_CODE')
+		if not code:
+			raise SyntaxError("Bad bf block")
+		code = format_bf(code.text[2:-2])
+		return BfDefNode(name.text,code)
+
 
 
 
@@ -417,22 +477,23 @@ def parse(prog):
 	return parser.program()
 
 
+def get_ast(path):
+	with open(path) as file:
+		code = file.read()
+	tokens = lex(code)
+	ast = Parser(tokens).parse()
+	return ast.list_of_statement
+
+
+
 #***************
 
-BUILT_IN_FUNCTIONS = ChainMap({
-	'putc':[('PUTC',)],
-	'scanc':[('SCANC',)],
-	'mod':[
 
-	('')
-
-	],
-
-	})
-		
 class Ast_to_IR:
 
-	def __init__(self,ast,functions=BUILT_IN_FUNCTIONS):
+	def __init__(self,ast,functions=None):
+		if functions is None:
+			functions = ChainMap({})
 		self.ast = ast
 		self.functions = functions
 
@@ -456,6 +517,9 @@ class Ast_to_IR:
 		for statement in statements:
 			if isinstance(statement,FunctionDefNode):
 				self.functions[statement.name] = Ast_to_IR(statement,self.functions).convert()
+			elif isinstance(statement,BfDefNode):
+				code = statement.code
+				self.functions[statement.name] = [('BF',code,statement.name)]
 
 
 		vars_ = []
@@ -573,6 +637,8 @@ methods = {
 	WhileNode: Ast_to_IR.while_to_ir,
 	IfNode: Ast_to_IR.if_to_ir,
 	IncDecNode: Ast_to_IR.inc_dec_to_ir,
+	BfDefNode: lambda self,node:None,
+	ImportNode: lambda self,node:None,
 }
 default = Ast_to_IR.expression_statement_to_ir
 
@@ -586,6 +652,10 @@ def init_function(nb,name):
 
 def end_function(nb,name):
 	return '<[-]' * nb + '>' * nb + (f"[-{'<'*nb}+{'>'*nb}]" if nb else "") + '<' * nb+ f'	END_FUNCTION {name}'
+
+def bf(code,name):
+	return f"BF {name}\n{code}\nEND_BF"
+
 
 
 def assign(val,name):
@@ -614,22 +684,25 @@ def bin_op(op):
 	elif op == '*':
 		bf = "<[->>+<<]>[->[-<<+>>>+<]>[-<+>]<<]>[-]<<"
 	elif op == '/':
-		bf = "[->+>>+<<<]<[->+>>+<<<]>>>[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]+>[<->[-]]<"
-		"[-<[-<->>+<]>[-<+>]<<<+>[->>+>+<<<]>>>[-<<<+>>>]<<[->>+>+<<<]>>>[-<<<+>>>]<<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>"
-		">[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]>>>[<<<+>>>-]<<<#]<[-]<[-]<"
-
+		bf = ("[->+>>+<<<]<[->+>>+<<<]>>>[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]+>[<->[-]]>>[-]<<<"
+			"[-<[-<->>+<]>[-<+>]<<<+>[->>+>+<<<]>>>[-<<<+>>>]<<[->>+>+<<<]>>>[-<<<+>>>]<<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>"
+			">[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]+>[<->[-]]>>[-]<<<]<[-]<[-]<")
+	elif op == '%':
+		bf = "[->+>>+<<<]<[->+>>+<<<]>>>[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]+>[<->[-]]>>[-]<<<" \
+			"[-<[-<->>+<]>[-<+>]<<[->>+>+<<<]>>>[-<<<+>>>]<<[->>+>+<<<]>>>[-<<<+>>>]<<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>" \
+			"[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]+>[<->[-]]>>[-]<<<]<[-]<[-<+>]<"
 	elif op == '==':
 		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + "+>[<->[-]]>>[<<<->>>-]<<<"
 	elif op == '!=':
 		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + ">[<+>[-]]>>[<<<+>>>-]<<<"
 	elif op == '>':
-		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + ">>>[<<<+>>>-]<<<"
+		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + ">[-]>>[<<<+>>>-]<<<"
 	elif op == '>=':
-		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + "+>[<->[-]]<"
+		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + "+>[<->[-]]>>[-]<<<"
 	elif op == '<':
-		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + ">[<+>[-]]<"
+		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + ">[<+>[-]]>>[-]<<<"
 	elif op == '<=':
-		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + "+>>>[<<<->>>-]<<<"
+		bf = "<[>[->+>+<<]>>[-<<+>>]+<[>-<[-]]>[->+>+<<]>>[-<<+>>]<[<<<<[-]+>+>>>-]<<<-<-]" + "+>[-]>>[<<<->>>-]<<<"
 
 	else:
 		raise Exception(f"bin_op {op} not implemented yet")
@@ -653,12 +726,6 @@ def else_end():
 
 def if_end():
 	return "<]>[-]<<	IF_END"
-
-def putc():
-	return ".	PRINT"
-
-def scanc():
-	return ",	INPUT"
 
 
 def compile_ir(ir):

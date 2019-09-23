@@ -1,12 +1,13 @@
 program = statement, {statement}
 
 block = "{",{statement}, "}"
-statement = short_statement | while_block | if_block | function_def
-short_statement = print | return | input | declaration | assignement | expression | inc-dec, ";"
+statement = short_statement | while_block | if_block | function_def | function_bf
+short_statement = print | return | input | declaration | assignement | expression | inc-dec | import, ";"
 
 assignement = name, assignement_symbol, expression
 declaration = "var" , name , {",",name}
 return = "return", expression
+import = "import", string
 
 expression = compar_op | function_call
 
@@ -14,9 +15,9 @@ function_call = name, '(',[expression,{','expression,}]
 
 
 compar = calcul, [compar_op, calcul]
-calcul = terme, [('+'|'-'), terme]
-terme = factor [("*"|"/"), factor]
-factor = val ["**", val]
+calcul = terme, {('+'|'-'), terme}
+terme = factor {("*"|"/"), factor}
+factor = val {"**", val}
 val = name | number | "(", expression, ")"
 inc-dec = name, ("++" | "--")
 
@@ -24,6 +25,9 @@ condition = '(', expression, ')'
 while_block = "while", condition, block
 if_block = "if", condition, block, ["else", block]
 function_def = "def", name, '(',[name,{',',name}],')',block
+function_bf = 'bf',name, '{', brainfuck_code, '}'
+
+brainfuck_code = {'<'|'>'|'+'|'-'|'.'|','|'['|']'}
 
 
 
